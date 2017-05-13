@@ -21,10 +21,18 @@ def strip_int_trailing_period(s):
 
 @attr.s
 class Position(object):
-    bar = attr.ib(convert=int)
+    measure = attr.ib(convert=int)
     beat = attr.ib(convert=int)
     division = attr.ib(convert=int)
     tick = attr.ib(convert=strip_int_trailing_period)
+
+
+@attr.s
+class EventLength(object):
+    measures = attr.ib(convert=int)
+    beats = attr.ib(convert=int)
+    divisions = attr.ib(convert=int)
+    ticks = attr.ib(convert=strip_int_trailing_period)
 
 
 @attr.s
@@ -35,23 +43,48 @@ class Tempo(object):
 
     @classmethod
     def from_string(cls, s):
-        bar, beat, division, tick, rest = s.split(maxsplit=4)
+        measure, beat, division, tick, rest = s.split(maxsplit=4)
         tempo, time = rest.split()
-        return cls(Position(bar, beat, division, tick), tempo, time)
+        return cls(Position(measure, beat, division, tick), tempo, time)
 
 
 @attr.s
-class Signature(object):
+class TimeSignature(object):
     position = attr.ib(validator=attr.validators.instance_of(Position))
+    signature = attr.ib()
 
     @classmethod
     def from_string(cls, s):
-        bar, beat, division, tick, rest = s.split(maxsplit=4)
+        measure, beat, division, tick, rest = s.split(maxsplit=4)
+        _, beats, _, divisions = rest.split()
+        return cls(Position(measure, beat, division, tick), (beats, divisions))
+
+    @classmethod
+    def validate(cls, data):
+        return data.split()[4] == 'Time'
+
+
+@attr.s
+class Event(object):
+    position = attr.ib(validator=attr.validators.instance_of(Position))
+    title = attr.ib()
+    track = attr.ib(convert=int)
+    length = attr.ib(validator=attr.validators.instance_of(EventLength))
+
+    @classmethod
+    def from_string(cls, s):
+        measure, beat, division, tick, rest = s.split(maxsplit=4)
+        pos = Position(measure, beat, division, tick)
+        title, track, rest = rest.split(maxsplit=2)
+        measures, beats, divisions, ticks = rest.split(maxsplit=4)
+        length = EventLength(measures, beats, divisions, ticks)
+        return cls(pos, title, track, length)
 
 
 def set_up_parser():
     parser = ArgumentParser(description=__doc__,
                             formatter_class=ArgumentDefaultsHelpFormatter)
+    parser.add_argument('cue_file')
     return parser
 
 
@@ -66,7 +99,9 @@ def sections(stream):
         if matcher:
             section = matcher.group(1)
             continue
-        yield TaggedLine(line, section)
+        line = line.strip()
+        if line:
+            yield TaggedLine(line, section)
 
 
 def splitter(stream):
@@ -91,17 +126,22 @@ def section_order(args):
 
 
 def get_tempos(data):
-    return [Tempo(row) for row in data]
+    return [Tempo.from_string(row.line) for row in data]
 
 
-def get_signatures(date):
-    return [Signature(row) for row in data]
+def get_signatures(data):
+    return [TimeSignature.from_string(row.line) for row in data
+            if TimeSignature.validate(row.line)]
+
+
+def get_events(data):
+    return [Event.from_string(row.line) for row in data]
 
 
 def main():
     args = set_up_parser().parse_args()
-    with open(args.cueFile) as stream:
-        for section, data in sorted(parsed_sections(stream), key=section_order):
+    with open(args.cue_file) as stream:
+        for section, data in parsed_sections(stream):
             if section == 'tempo':
                 tempos = get_tempos(data)
             elif section == 'signatures':
