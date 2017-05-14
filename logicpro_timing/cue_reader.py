@@ -1,12 +1,16 @@
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-from collections import namedtuple
 
 import itertools
 import operator
 import re
 import sys
+from datetime import timedelta
+from decimal import Decimal
 
 import attr
+
+# This seems to be constant in Logic Pro
+TICKS_PER_BEAT = 960
 
 
 @attr.s
@@ -16,15 +20,45 @@ class TaggedLine(object):
 
 
 def strip_int_trailing_period(s):
-    return int(s.rstrip('.'))
+    try:
+        return int(s.rstrip('.')) - 1
+    except AttributeError:
+        return int(s) - 1
+
+
+def int_to_zero_index(s):
+    return int(s) - 1
+
+
+def seconds_per_beat(tempo):
+    return Decimal(60) / Decimal(tempo)
 
 
 @attr.s
 class Position(object):
-    measure = attr.ib(convert=int)
-    beat = attr.ib(convert=int)
-    division = attr.ib(convert=int)
+    measure = attr.ib(convert=int_to_zero_index)
+    beat = attr.ib(convert=int_to_zero_index)
+    division = attr.ib(convert=int_to_zero_index)
     tick = attr.ib(convert=strip_int_trailing_period)
+
+    def to_timedelta(self, tempo, time_signature):
+        return timedelta(
+            microseconds=int(
+                seconds_per_beat(tempo)
+                * 1000000
+                * (
+                    (self.measure * time_signature.beats)
+                    + (self.beat)
+                    + (self.division * Decimal(1) / Decimal(time_signature.division))
+                    + (self.tick * Decimal(1) / Decimal(TICKS_PER_BEAT))
+                )
+            )
+        )
+
+
+@attr.s
+class Event(object):
+    position = attr.ib(validator=attr.validators.instance_of(Position))
 
 
 @attr.s
@@ -35,11 +69,21 @@ class EventLength(object):
     ticks = attr.ib(convert=strip_int_trailing_period)
 
 
+def to_timedelta(time_str):
+    _, hours, minutes, seconds = time_str.split(':')
+    seconds, dot, decimal_part = seconds.partition('.')
+    return timedelta(
+        hours=int(hours),
+        minutes=int(minutes),
+        seconds=int(seconds),
+        microseconds=int(Decimal(dot + decimal_part) * 1000000)
+    )
+
+
 @attr.s
-class Tempo(object):
-    position = attr.ib(validator=attr.validators.instance_of(Position))
-    tempo = attr.ib(convert=float)
-    time = attr.ib()
+class TempoEvent(Event):
+    tempo = attr.ib(convert=Decimal)
+    time = attr.ib(convert=to_timedelta)
 
     @classmethod
     def from_string(cls, s):
@@ -50,14 +94,20 @@ class Tempo(object):
 
 @attr.s
 class TimeSignature(object):
-    position = attr.ib(validator=attr.validators.instance_of(Position))
-    signature = attr.ib()
+    beats = attr.ib(convert=int)
+    division = attr.ib(convert=int)
+
+
+@attr.s
+class TimeSignatureEvent(Event):
+    time_signature = attr.ib(validator=attr.validators.instance_of(TimeSignature))
 
     @classmethod
     def from_string(cls, s):
         measure, beat, division, tick, rest = s.split(maxsplit=4)
         _, beats, _, divisions = rest.split()
-        return cls(Position(measure, beat, division, tick), (beats, divisions))
+        return cls(Position(measure, beat, division, tick),
+                   TimeSignature(beats, divisions))
 
     @classmethod
     def validate(cls, data):
@@ -65,8 +115,7 @@ class TimeSignature(object):
 
 
 @attr.s
-class Event(object):
-    position = attr.ib(validator=attr.validators.instance_of(Position))
+class NoteEvent(Event):
     title = attr.ib()
     track = attr.ib(convert=int)
     length = attr.ib(validator=attr.validators.instance_of(EventLength))
@@ -126,16 +175,50 @@ def section_order(args):
 
 
 def get_tempos(data):
-    return [Tempo.from_string(row.line) for row in data]
+    return [TempoEvent.from_string(row.line) for row in data]
 
 
 def get_signatures(data):
-    return [TimeSignature.from_string(row.line) for row in data
-            if TimeSignature.validate(row.line)]
+    return [TimeSignatureEvent.from_string(row.line) for row in data
+            if TimeSignatureEvent.validate(row.line)]
 
 
 def get_events(data):
-    return [Event.from_string(row.line) for row in data]
+    return [NoteEvent.from_string(row.line) for row in data]
+
+
+class EventStream(object):
+    def __init__(self, tempos, signatures, events, default_tempo=120):
+        self._stream = sorted(
+            itertools.chain(tempos, signatures, events),
+            key=operator.attrgetter('position')
+        )
+        self._curr_time = timedelta()
+        self._curr_position = Position(1, 1, 1, 1)
+        self._curr_tempo = Decimal(120)
+        self._curr_signature = TimeSignature(4, 4)
+        self._last_tempo_change = timedelta()
+
+    def _compute_time(self, event):
+        event_pos = event.position
+        return (
+            self._curr_time
+            + event_pos.to_timedelta(self._curr_tempo, self._curr_signature)
+            - self._curr_position.to_timedelta(self._curr_tempo, self._curr_signature)
+        )
+
+    def event_times(self):
+        for item in self._stream:
+            new_time = self._compute_time(item)
+            if hasattr(item, 'tempo'):
+                self._curr_tempo = item.tempo
+                self._last_tempo_change = item.time
+            elif hasattr(item, 'time_signature'):
+                self._curr_signature = item.time_signature
+            elif hasattr(item, 'length'):
+                yield (new_time, item)
+            self._curr_time = new_time
+            self._curr_position = item.position
 
 
 def main():
@@ -150,6 +233,9 @@ def main():
                 events = get_events(data)
             else:
                 raise RuntimeError('Unknown section {}'.format(section))
+    event_stream = EventStream(tempos, signatures, events)
+    for time, event in event_stream.event_times():
+        print(time, '->', event.title)
 
 
 if __name__ == "__main__":
