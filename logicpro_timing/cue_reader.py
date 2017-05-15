@@ -1,6 +1,8 @@
 from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 
+import io
 import itertools
+import json
 import operator
 import re
 import sys
@@ -11,6 +13,14 @@ import attr
 
 # This seems to be constant in Logic Pro
 TICKS_PER_BEAT = 960
+
+
+def set_up_parser():
+    parser = ArgumentParser(description=__doc__,
+                            formatter_class=ArgumentDefaultsHelpFormatter)
+    parser.add_argument('cue_file')
+    parser.add_argument('--json')
+    return parser
 
 
 @attr.s
@@ -130,13 +140,6 @@ class NoteEvent(Event):
         return cls(pos, title, track, length)
 
 
-def set_up_parser():
-    parser = ArgumentParser(description=__doc__,
-                            formatter_class=ArgumentDefaultsHelpFormatter)
-    parser.add_argument('cue_file')
-    return parser
-
-
 def sections(stream):
     """
     Tag each line of the stream with its [section] (or None)
@@ -234,8 +237,14 @@ def main():
             else:
                 raise RuntimeError('Unknown section {}'.format(section))
     event_stream = EventStream(tempos, signatures, events)
+    json_output = []
     for time, event in event_stream.event_times():
         print(time, '->', event.title)
+        if args.json:
+            json_output.append({'text': event.title, 'time': str(time)})
+    if args.json:
+        with io.open(args.json, 'w', encoding='utf-8') as json_file:
+            json.dump(json_output, json_file, indent=4)
 
 
 if __name__ == "__main__":
