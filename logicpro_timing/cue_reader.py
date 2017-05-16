@@ -21,7 +21,7 @@ def set_up_parser():
                             formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('cue_file')
     parser.add_argument('--json')
-    parser.add_argument('--elm')
+    parser.add_argument('--elm', default='lyrics.elm')
     return parser
 
 
@@ -230,19 +230,36 @@ def write_elm_output(elm_filename, event_list):
     with io.open(elm_filename, 'w', encoding='utf-8') as elm_file:
         print(dedent(
             """
-            import Array
+            module Lyrics exposing (..)
 
-            type alias Event =
+            import Array exposing (Array)
+            import Time exposing (Time)
+
+            type alias Lyric =
                 { text : String
                 , time : Time
                 }
 
-            events : Array Event =
+            syllableMarker : Char
+            syllableMarker =
+                '•'
+
+            lineBreakMarker : Char
+            lineBreakMarker =
+                '¬'
+
+            pageBreakMarker : Char
+            pageBreakMarker =
+                '¶'
+
+            lyrics : Array Lyric
+            lyrics =
                 Array.fromList <|"""
         ), file=elm_file)
         print('        [ ', end='', file=elm_file)
         print('        , '.join(
-            ['Event "{}" {}\n'.format(evt['text'], evt['time']) for evt in event_list]
+            ['Lyric "{}" {}\n'.format(evt['text'], evt['time'].total_seconds())
+             for evt in event_list]
         ), end='', file=elm_file)
         print('        ]', file=elm_file)
 
@@ -260,7 +277,7 @@ def main():
             else:
                 raise RuntimeError('Unknown section {}'.format(section))
     event_stream = EventStream(tempos, signatures, events)
-    output_list = [{'text': event.title, 'time': str(time)}
+    output_list = [{'text': event.title, 'time': time}
                    for time, event in event_stream.event_times()]
     if args.json:
         with io.open(args.json, 'w', encoding='utf-8') as json_file:
