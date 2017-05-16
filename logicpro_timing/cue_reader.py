@@ -8,6 +8,7 @@ import re
 import sys
 from datetime import timedelta
 from decimal import Decimal
+from textwrap import dedent
 
 import attr
 
@@ -20,6 +21,7 @@ def set_up_parser():
                             formatter_class=ArgumentDefaultsHelpFormatter)
     parser.add_argument('cue_file')
     parser.add_argument('--json')
+    parser.add_argument('--elm')
     return parser
 
 
@@ -224,6 +226,27 @@ class EventStream(object):
             self._curr_position = item.position
 
 
+def write_elm_output(elm_filename, event_list):
+    with io.open(elm_filename, 'w', encoding='utf-8') as elm_file:
+        print(dedent(
+            """
+            import Array
+
+            type alias Event =
+                { text : String
+                , time : Time
+                }
+
+            events : Array Event =
+                Array.fromList <|"""
+        ), file=elm_file)
+        print('        [ ', end='', file=elm_file)
+        print('        , '.join(
+            ['Event "{}" {}\n'.format(evt['text'], evt['time']) for evt in event_list]
+        ), end='', file=elm_file)
+        print('        ]', file=elm_file)
+
+
 def main():
     args = set_up_parser().parse_args()
     with open(args.cue_file) as stream:
@@ -237,14 +260,13 @@ def main():
             else:
                 raise RuntimeError('Unknown section {}'.format(section))
     event_stream = EventStream(tempos, signatures, events)
-    json_output = []
-    for time, event in event_stream.event_times():
-        print(time, '->', event.title)
-        if args.json:
-            json_output.append({'text': event.title, 'time': str(time)})
+    output_list = [{'text': event.title, 'time': str(time)}
+                   for time, event in event_stream.event_times()]
     if args.json:
         with io.open(args.json, 'w', encoding='utf-8') as json_file:
-            json.dump(json_output, json_file, indent=4)
+            json.dump(output_list, json_file, indent=4)
+    if args.elm:
+        write_elm_output(args.elm, output_list)
 
 
 if __name__ == "__main__":
