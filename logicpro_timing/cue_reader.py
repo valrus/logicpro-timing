@@ -239,6 +239,13 @@ def text_with_break_type(text):
         return (text, 'Word')
 
 
+def print_lyrics_tree(event_list):
+    for event in event_list:
+        pass
+        # store lyrics in page/line/lyric tree?
+        # or flat with markers?
+
+
 def write_elm_output(elm_filename, event_list):
     with io.open(elm_filename, 'w', encoding='utf-8') as elm_file:
         print(dedent("""
@@ -253,13 +260,6 @@ def write_elm_output(elm_filename, event_list):
                 , break : LyricBreak
                 , time : Time
                 }
-
-
-            type LyricBreak
-                = Word
-                | Syllable
-                | Line
-                | Page
 
 
             lyrics : Array Lyric
