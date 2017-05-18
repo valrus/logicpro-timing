@@ -15,6 +15,12 @@ import attr
 # This seems to be constant in Logic Pro
 TICKS_PER_BEAT = 960
 
+ELM_BREAK_TYPE_MAPPING = {
+    '•': 'Syllable',
+    '¬': 'Line',
+    '¶': 'Page',
+}
+
 
 def set_up_parser():
     parser = ArgumentParser(description=__doc__,
@@ -226,39 +232,44 @@ class EventStream(object):
             self._curr_position = item.position
 
 
+def text_with_break_type(text):
+    if text and text[-1] in ELM_BREAK_TYPE_MAPPING:
+        return (text[:-1], ELM_BREAK_TYPE_MAPPING[text[-1]])
+    else:
+        return (text, 'Word')
+
+
 def write_elm_output(elm_filename, event_list):
     with io.open(elm_filename, 'w', encoding='utf-8') as elm_file:
-        print(dedent(
-            """
+        print(dedent("""
             module Lyrics exposing (..)
 
             import Array exposing (Array)
             import Time exposing (Time)
 
+
             type alias Lyric =
                 { text : String
+                , break : LyricBreak
                 , time : Time
                 }
 
-            syllableMarker : Char
-            syllableMarker =
-                '•'
 
-            lineBreakMarker : Char
-            lineBreakMarker =
-                '¬'
+            type LyricBreak
+                = Word
+                | Syllable
+                | Line
+                | Page
 
-            pageBreakMarker : Char
-            pageBreakMarker =
-                '¶'
 
             lyrics : Array Lyric
             lyrics =
-                Array.fromList <|"""
-        ), file=elm_file)
+                Array.fromList <|
+        """).strip(), file=elm_file)
         print('        [ ', end='', file=elm_file)
         print('        , '.join(
-            ['Lyric "{}" {}\n'.format(evt['text'], evt['time'].total_seconds())
+            ['Lyric "{}" {} {}\n'.format(*text_with_break_type(evt['text']),
+                                         evt['time'].total_seconds())
              for evt in event_list]
         ), end='', file=elm_file)
         print('        ]', file=elm_file)
