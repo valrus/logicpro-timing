@@ -6,8 +6,10 @@ import json
 import operator
 import re
 import sys
+from collections import deque
 from datetime import timedelta
 from decimal import Decimal
+from functools import partial
 from textwrap import dedent
 
 import attr
@@ -15,10 +17,10 @@ import attr
 # This seems to be constant in Logic Pro
 TICKS_PER_BEAT = 960
 
-ELM_BREAK_TYPE_MAPPING = {
-    '•': 'Syllable',
-    '¬': 'Line',
-    '¶': 'Page',
+BREAK_TYPE_MAPPING = {
+    'Syllable': '•',
+    'Line': '¬',
+    'Page': '¶',
 }
 
 
@@ -233,17 +235,57 @@ class EventStream(object):
 
 
 def text_with_break_type(text):
-    if text and text[-1] in ELM_BREAK_TYPE_MAPPING:
-        return (text[:-1], ELM_BREAK_TYPE_MAPPING[text[-1]])
+    return_val = text
+    if text and text[-1] in BREAK_TYPE_MAPPING.values():
+        return text[:-1]
+    elif text and text.endswith(BREAK_TYPE_MAPPING['Syllable']):
+        return text[:-1]
     else:
-        return (text, 'Word')
+        return text + ' '
 
 
-def print_lyrics_tree(event_list):
-    for event in event_list:
-        pass
-        # store lyrics in page/line/lyric tree?
-        # or flat with markers?
+def no_break(break_types, lyric):
+    return not has_break(break_types, lyric)
+
+
+def has_break(break_types, lyric):
+    return any (lyric['text'].endswith(BREAK_TYPE_MAPPING[break_type])
+                for break_type in break_types)
+
+
+def groupwhile(predicate, iterable):
+    inner = deque()
+    for i in iterable:
+        inner.append(i)
+        if not predicate(i):
+            yield inner
+            inner.clear()
+    yield inner
+
+
+def print_lyrics_tree(event_list, out_file):
+    lyric_template = '          Lyric "{text}" <| {time} * Time.second'
+    print(
+        '    [\n' +
+        ',\n'.join([
+            '      [\n' +
+            ',\n'.join([
+                '        [\n' +
+                ',\n'.join([
+                    lyric_template.format(
+                        text=text_with_break_type(token['text']),
+                        time=token['time'].total_seconds()
+                    )
+                    for token in line]) +
+                '\n        ]'
+                for line in groupwhile(partial(no_break, ['Line']), page)
+            ]) +
+            ' ]'
+            for page in groupwhile(partial(no_break, ['Page']), event_list)
+        ])
+        + ' ]'
+        , file=out_file
+    )
 
 
 def write_elm_output(elm_filename, event_list):
@@ -251,28 +293,44 @@ def write_elm_output(elm_filename, event_list):
         print(dedent("""
             module Lyrics exposing (..)
 
-            import Array exposing (Array)
             import Time exposing (Time)
 
 
             type alias Lyric =
-                { text : String
-                , break : LyricBreak
+                {{ text : String
                 , time : Time
-                }
+                }}
 
 
-            lyrics : Array Lyric
+            type alias LyricLine =
+                List Lyric
+
+
+            type alias LyricPage =
+                List LyricLine
+
+
+            type alias LyricBook =
+                List LyricPage
+
+
+            lyricBaseFontTTF : String
+            lyricBaseFontTTF =
+                "{font_path}"
+
+
+            lyricBaseFontName : String
+            lyricBaseFontName =
+                "{font_name}"
+
+
+            lyrics : LyricBook
             lyrics =
-                Array.fromList <|
-        """).strip(), file=elm_file)
-        print('        [ ', end='', file=elm_file)
-        print('        , '.join(
-            ['Lyric "{}" {} {}\n'.format(*text_with_break_type(evt['text']),
-                                         evt['time'].total_seconds())
-             for evt in event_list]
-        ), end='', file=elm_file)
-        print('        ]', file=elm_file)
+        """).strip().format(
+            font_path='static/fonts/leaguegothic/leaguegothic-regular-webfont.ttf',
+            font_name='LeagueGothic',
+        ), file=elm_file)
+        print_lyrics_tree(iter(event_list), elm_file)
 
 
 def main():
