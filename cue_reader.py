@@ -9,8 +9,8 @@ import sys
 from collections import deque
 from datetime import timedelta
 from decimal import Decimal
-from functools import partial
-from textwrap import dedent
+
+from logicpro_timing.elm_output.elm_output import write_elm_output
 
 import attr
 
@@ -234,103 +234,9 @@ class EventStream(object):
             self._curr_position = item.position
 
 
-def text_with_break_type(text):
-    return_val = text
-    if text and text[-1] in BREAK_TYPE_MAPPING.values():
-        return text[:-1]
-    elif text and text.endswith(BREAK_TYPE_MAPPING['Syllable']):
-        return text[:-1]
-    else:
-        return text + ' '
-
-
-def no_break(break_types, lyric):
-    return not has_break(break_types, lyric)
-
-
-def has_break(break_types, lyric):
-    return any (lyric['text'].endswith(BREAK_TYPE_MAPPING[break_type])
-                for break_type in break_types)
-
-
-def groupwhile(predicate, iterable):
-    inner = deque()
-    for i in iterable:
-        inner.append(i)
-        if not predicate(i):
-            yield inner
-            inner.clear()
-    yield inner
-
-
-def print_lyrics_tree(event_list, out_file):
-    lyric_template = '          Lyric "{text}" <| {time} * Time.second'
-    print(
-        '    [\n' +
-        ',\n'.join([
-            '      [\n' +
-            ',\n'.join([
-                '        [\n' +
-                ',\n'.join([
-                    lyric_template.format(
-                        text=text_with_break_type(token['text']),
-                        time=token['time'].total_seconds()
-                    )
-                    for token in line]) +
-                '\n        ]'
-                for line in groupwhile(partial(no_break, ['Line']), page)
-            ]) +
-            ' ]'
-            for page in groupwhile(partial(no_break, ['Page']), event_list)
-        ])
-        + ' ]'
-        , file=out_file
-    )
-
-
-def write_elm_output(elm_filename, event_list):
-    with io.open(elm_filename, 'w', encoding='utf-8') as elm_file:
-        print(dedent("""
-            module Lyrics exposing (..)
-
-            import Time exposing (Time)
-
-
-            type alias Lyric =
-                {{ text : String
-                , time : Time
-                }}
-
-
-            type alias LyricLine =
-                List Lyric
-
-
-            type alias LyricPage =
-                List LyricLine
-
-
-            type alias LyricBook =
-                List LyricPage
-
-
-            lyricBaseFontTTF : String
-            lyricBaseFontTTF =
-                "{font_path}"
-
-
-            lyricBaseFontName : String
-            lyricBaseFontName =
-                "{font_name}"
-
-
-            lyrics : LyricBook
-            lyrics =
-        """).strip().format(
-            font_path='static/fonts/leaguegothic/leaguegothic-regular-webfont.ttf',
-            font_name='LeagueGothic',
-        ), file=elm_file)
-        print_lyrics_tree(iter(event_list), elm_file)
+def timedelta_handler(obj):
+    if isinstance(obj, timedelta):
+        return obj.total_seconds()
 
 
 def main():
@@ -350,7 +256,7 @@ def main():
                    for time, event in event_stream.event_times()]
     if args.json:
         with io.open(args.json, 'w', encoding='utf-8') as json_file:
-            json.dump(output_list, json_file, indent=4)
+            json.dump(output_list, json_file, indent=4, default=timedelta_handler)
     if args.elm:
         write_elm_output(args.elm, output_list)
 
