@@ -1,18 +1,19 @@
-from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
-
 import io
 import itertools
 import json
 import operator
 import re
 import sys
-from collections import deque
+from argparse import ArgumentParser, ArgumentDefaultsHelpFormatter
 from datetime import timedelta
 from decimal import Decimal
-
-from logicpro_timing.elm_output.elm_output import write_elm_output
+from functools import partial
 
 import attr
+
+from logicpro_timing.elm_output.elm_output import write_elm_output
+from logicpro_timing.parsing.helpers import groupwhile, no_break, text_with_break_type
+
 
 # This seems to be constant in Logic Pro
 TICKS_PER_BEAT = 960
@@ -239,6 +240,26 @@ def timedelta_handler(obj):
         return obj.total_seconds()
 
 
+def dump_nested_json(event_list, json_file):
+    json.dump(
+        ([
+            ([
+                ([
+                    {
+                        "text": text_with_break_type(token['text']),
+                        "time": token['time'].total_seconds()
+                    }
+                    for token in line
+                ])
+                for line in groupwhile(partial(no_break, ['Line']), page)
+            ])
+            for page in groupwhile(partial(no_break, ['Page']), event_list)
+        ]),
+        json_file,
+        indent=4,
+    )
+
+
 def main():
     args = set_up_parser().parse_args()
     with open(args.cue_file) as stream:
@@ -256,7 +277,7 @@ def main():
                    for time, event in event_stream.event_times()]
     if args.json:
         with io.open(args.json, 'w', encoding='utf-8') as json_file:
-            json.dump(output_list, json_file, indent=4, default=timedelta_handler)
+            dump_nested_json(output_list, json_file)
     if args.elm:
         write_elm_output(args.elm, output_list)
 
