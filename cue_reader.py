@@ -209,7 +209,7 @@ class EventStream(object):
         )
         self._curr_time = timedelta()
         self._curr_position = Position(1, 1, 1, 1)
-        self._curr_tempo = Decimal(120)
+        self._curr_tempo = Decimal(default_tempo)
         self._curr_signature = TimeSignature(4, 4)
         self._last_tempo_change = timedelta()
 
